@@ -76,3 +76,35 @@ def filter_data_id_and_transfer() -> Dict:
     for r in records:
         data.setdefault(r["transfer_cluster_id"], []).append(r["bk_data_id"])
     return data
+
+
+def delete_datalink(bk_data_id: int):
+    """通过数据源 ID 删除数据链路
+
+    1. 数据源
+        - 数据源记录
+        - 数据源 option
+        - 数据源和结果表关联关系
+        - kafka topic
+        - 删除写入 gse ds 的
+
+    2. 结果表
+        - 结果表记录
+        - 结果表 option
+        - 结果表指标
+        - 结果表指标选择
+        - CMDBLevel
+
+    3. 存储
+        - influxdb
+        - vm
+        - kafka
+        - es
+        - bkdata
+
+    4. 数据依赖
+        - consul -- transfer 依赖 ds
+        - redis  -- unify query 依赖
+    """
+    pass
+    pass
