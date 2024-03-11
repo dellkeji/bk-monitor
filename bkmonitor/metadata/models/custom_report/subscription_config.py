@@ -22,6 +22,7 @@ from bkmonitor.utils.common_utils import count_md5
 from bkmonitor.utils.db.fields import JsonField
 from core.drf_resource import api
 from metadata.models.constants import LOG_REPORT_MAX_QPS
+from metadata.utils.basic import log_format_record
 
 logger = logging.getLogger("metadata")
 
@@ -79,8 +80,7 @@ class CustomReportSubscription(models.Model):
         db_table = "custom_report_subscription_config_v2"
 
     @classmethod
-    def create_subscription(cls, bk_biz_id, items, bk_host_ids, plugin_name, op_type="add"):
-
+    def create_subscription(cls, bk_biz_id, items, bk_host_ids, plugin_name, op_type="add", task_name=""):
         available_host_ids = get_proxy_host_ids(bk_host_ids) if plugin_name == "bkmonitorproxy" else bk_host_ids
 
         if op_type != "remove" and not available_host_ids:
@@ -131,7 +131,7 @@ class CustomReportSubscription(models.Model):
                     }
                 ],
             }
-            return cls.create_or_update_config(subscription_params, bk_biz_id)
+            return cls.create_or_update_config(subscription_params, bk_biz_id, task_name=task_name)
         for item in items:
             # bk-collector 默认自定义事件，和json的自定义指标使用bk-collector-report-v2.conf
             sub_config_name = "bk-collector-report-v2.conf"
@@ -293,7 +293,7 @@ class CustomReportSubscription(models.Model):
         return biz_id_to_data_id_config
 
     @classmethod
-    def refresh_collector_custom_conf(cls, bk_biz_id=None, plugin_name="bkmonitorproxy", op_type="add"):
+    def refresh_collector_custom_conf(cls, bk_biz_id=None, plugin_name="bkmonitorproxy", op_type="add", task_name=""):
         """
         指定业务ID更新，或者更新全量业务
 
@@ -371,7 +371,7 @@ class CustomReportSubscription(models.Model):
                 continue
 
             # 3. 通过节点管理下发配置
-            cls.create_subscription(biz_id, items, bk_host_ids, plugin_name, op_type)
+            cls.create_subscription(biz_id, items, bk_host_ids, plugin_name, op_type, task_name=task_name)
 
         # 4. 通过节点管理下发直连区域配置，下发全部bk_data_id
         items = list(chain(*list(biz_id_to_data_id_config.values())))
@@ -383,10 +383,14 @@ class CustomReportSubscription(models.Model):
                 "Update custom report config to default cloud area error, The default cloud area is not deployed"
             )
             return
-        cls.create_subscription(0, items, [host["bk_host_id"] for host in hosts], plugin_name, op_type)
+        cls.create_subscription(
+            0, items, [host["bk_host_id"] for host in hosts], plugin_name, op_type, task_name=task_name
+        )
 
     @classmethod
-    def create_or_update_config(cls, subscription_params, bk_biz_id, plugin_name="bkmonitorproxy", bk_data_id=0):
+    def create_or_update_config(
+        cls, subscription_params, bk_biz_id, plugin_name="bkmonitorproxy", bk_data_id=0, task_name=""
+    ):
         # 若订阅存在则判定是否更新，若不存在则创建
         # 使用proxy下发bk_data_id为默认值0，一个业务下的多个data_id对应一个订阅
         qs = CustomReportSubscription.objects.filter(bk_biz_id=bk_biz_id, bk_data_id=bk_data_id)
@@ -408,6 +412,7 @@ class CustomReportSubscription(models.Model):
                 if old_subscription_params_md5 != new_subscription_params_md5:
                     logger.info("subscription task config has changed, update it.")
                     result = api.node_man.update_subscription(subscription_params)
+                    log_format_record(logger, task_name, "post", subscription_params, result)
                     logger.info("update subscription successful, result:{}".format(result))
                     qs.update(config=subscription_params)
                 return sub_config_obj.subscription_id
@@ -417,6 +422,7 @@ class CustomReportSubscription(models.Model):
             try:
                 logger.info("subscription task not exists, create it.")
                 result = api.node_man.create_subscription(subscription_params)
+                log_format_record(logger, task_name, "post", subscription_params, result)
                 logger.info("create subscription successful, result:{}".format(result))
 
                 # 创建订阅成功后，优先存储下来，不然因为其他报错会导致订阅ID丢失
@@ -430,6 +436,13 @@ class CustomReportSubscription(models.Model):
 
                 result = api.node_man.run_subscription(
                     subscription_id=subscription_id, actions={plugin_name: "INSTALL"}
+                )
+                log_format_record(
+                    logger,
+                    task_name,
+                    "post",
+                    {"subscription_id": subscription_id, "actions": {plugin_name: "INSTALL"}},
+                    result,
                 )
                 logger.info("run subscription result:{}".format(result))
                 return subscription_id
@@ -485,7 +498,7 @@ class LogSubscriptionConfig(models.Model):
         return target_hosts
 
     @classmethod
-    def refresh(cls, log_group) -> None:
+    def refresh(cls, log_group, task_name="") -> None:
         """
         Refresh Config
         """
@@ -501,7 +514,7 @@ class LogSubscriptionConfig(models.Model):
 
         # Deploy Config
         try:
-            cls.deploy(log_group, log_config, bk_host_ids)
+            cls.deploy(log_group, log_config, bk_host_ids, task_name=task_name)
         except Exception:
             logger.exception("auto deploy bk-collector log config error")
 
@@ -531,7 +544,7 @@ class LogSubscriptionConfig(models.Model):
         }
 
     @classmethod
-    def deploy(cls, log_group, platform_config, bk_host_ids) -> None:
+    def deploy(cls, log_group, platform_config, bk_host_ids, task_name="") -> None:
         """
         Deploy Custom Log Config
         """
@@ -570,6 +583,7 @@ class LogSubscriptionConfig(models.Model):
                 if old_subscription_params_md5 != new_subscription_params_md5:
                     logger.info("custom log config subscription task config has changed, update it.")
                     result = api.node_man.update_subscription(subscription_params)
+                    log_format_record(logger, task_name, "post", subscription_params, result)
                     logger.info("update custom log config subscription successful, result:{}".format(result))
                     log_subscription.update(config=subscription_params)
                 return sub_config_obj.subscription_id
@@ -581,6 +595,7 @@ class LogSubscriptionConfig(models.Model):
             try:
                 logger.info("custom log config subscription task not exists, create it.")
                 result = api.node_man.create_subscription(subscription_params)
+                log_format_record(logger, task_name, "post", subscription_params, result)
                 logger.info("create custom log config subscription successful, result:{}".format(result))
 
                 # 创建订阅成功后，优先存储下来，不然因为其他报错会导致订阅ID丢失

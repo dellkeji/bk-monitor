@@ -237,7 +237,7 @@ def refresh_es_storage():
     if es_cluster_wl:
         # 这里集群不会太多
         es_storage_data = models.ESStorage.objects.filter(storage_cluster_id__in=es_cluster_wl)
-        manage_es_storage.delay(es_storage_data)
+        manage_es_storage.delay(es_storage_data, task_name="refresh_es_storage")
     # 设置每100条记录，拆分为一个任务
     start, step = 0, 100
     es_storages = models.ESStorage.objects.exclude(storage_cluster_id__in=es_cluster_wl)
@@ -249,7 +249,7 @@ def refresh_es_storage():
 
     count = es_storages.count()
     for s in range(start, count, step):
-        manage_es_storage.delay(es_storages[s : s + step])
+        manage_es_storage.delay(es_storages[s : s + step], task_name="refresh_es_storage")
 
     logger.info("es_storage cron task started success.")
 

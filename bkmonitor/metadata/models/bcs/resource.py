@@ -4,6 +4,7 @@
 import datetime
 import json
 import logging
+from typing import Optional
 
 from django.conf import settings
 from django.db import models
@@ -14,7 +15,7 @@ from kubernetes import client as k8s_client
 
 from bkmonitor.utils.consul import BKConsul
 from metadata import config
-from metadata.utils import consul_tools
+from metadata.utils import basic, consul_tools
 
 from .cluster import BCSClusterInfo
 from .replace import ReplaceConfig
@@ -94,7 +95,7 @@ class BCSResource(models.Model):
         return False
 
     @classmethod
-    def refresh_custom_resource(cls, cluster_id):
+    def refresh_custom_resource(cls, cluster_id, task_name=""):
         """
         刷新自定义资源信息，追加部署的资源，更新未同步的资源
         :param cluster_id: 集群ID
@@ -125,19 +126,24 @@ class BCSResource(models.Model):
             # 检查k8s集群里是否已经存在对应resource
             if item.config_name not in resource_items.keys():
                 # 如果k8s_resource不存在，则增加
-                ensure_data_id_resource(api_client=api_client, resource_name=item.config_name, config_data=item.config)
+                ensure_data_id_resource(
+                    api_client=api_client, resource_name=item.config_name, config_data=item.config, task_name=task_name
+                )
                 logger.info("cluster->[%s] add new resource->[%s]", cluster_id, item.config)
             else:
                 # 否则检查信息是否一致，不一致则更新
                 if not is_equal_config(item.config, resource_items[item.config_name]):
                     ensure_data_id_resource(
-                        api_client=api_client, resource_name=item.config_name, config_data=item.config
+                        api_client=api_client,
+                        resource_name=item.config_name,
+                        config_data=item.config,
+                        task_name=task_name,
                     )
                     logger.info("cluster->[%s] update resource->[%s]", cluster_id, item.config)
 
     @classmethod
     @atomic(config.DATABASE_CONNECTION_NAME)
-    def refresh_resource(cls, cluster_id: int, common_data_id: int) -> bool:
+    def refresh_resource(cls, cluster_id: int, common_data_id: int, task_name: Optional[str] = "") -> bool:
         """
         刷新集群资源信息，追加未发现的资源,删除已不存在的资源
         :param cluster_id: 集群ID
@@ -155,7 +161,7 @@ class BCSResource(models.Model):
 
         resource_name_list = []
         # 遍历所有的资源信息
-        bulk_create_data = []
+        bulk_create_data, body = [], []
         for resource in resource_list["items"]:
             namespace = resource["metadata"]["namespace"]
             name = resource["metadata"]["name"]
@@ -191,6 +197,18 @@ class BCSResource(models.Model):
                     resource_create_time=datetime.datetime.now(),
                 )
             )
+
+            body.append(
+                {
+                    "cluster_id": cluster_id,
+                    "namespace": namespace,
+                    "name": name,
+                    "bk_data_id": common_data_id,
+                    "is_common_data_id": True,
+                    "is_custom_resource": True,
+                }
+            )
+
             logger.info(
                 "cluster->[%s] now create resource->[%s] name->[%s] under namespace->[%s] with data_id->[%s]"
                 " success.",
@@ -204,12 +222,15 @@ class BCSResource(models.Model):
         # 批量创建
         cls.objects.bulk_create(bulk_create_data)
 
+        basic.log_format_record(logger, "refresh_bcs_monitor_info", "insert", body)
         # 删除已经不存在的resource映射
         resource_name_set = set(resource_name_list)
+        deleted_name_list = []
         for item in cls.objects.filter(cluster_id=cluster_id):
             key = f"{item.namespace}_{item.name}"
             if key not in resource_name_set:
                 item.delete()
+                deleted_name_list.append({"cluster_id": cluster_id, "namespace": item.namespace, "name": item.name})
                 logger.info(
                     "cluster->[%s] delete monitor info->[%s] name->[%s] namespace->[%s] update success.",
                     cluster_id,
@@ -217,6 +238,8 @@ class BCSResource(models.Model):
                     item.name,
                     item.namespace,
                 )
+
+        basic.log_format_record(logger, "refresh_bcs_monitor_info", "delete", deleted_name_list)
 
         logger.info("cluster->[%s] all resource->[%s] update success.", cluster_id, cls.PLURAL)
         return True
@@ -236,7 +259,6 @@ class BCSResource(models.Model):
 
     @cached_property
     def config_name(self) -> str:
-
         prefix = "common" if self.is_common_data_id else "custom"
         end = "custom" if self.is_custom_resource else "system"
 

@@ -18,6 +18,7 @@ from bkmonitor.commons.tools import is_ipv6_biz
 from bkmonitor.utils.common_utils import count_md5
 from bkmonitor.utils.db import JsonField
 from core.drf_resource import api
+from metadata.utils.basic import log_format_record
 
 logger = logging.getLogger("metadata")
 
@@ -44,7 +45,7 @@ class PingServerSubscriptionConfig(models.Model):
         unique_together = (("bk_host_id", "bk_cloud_id", "ip", "plugin_name"),)
 
     @classmethod
-    def create_subscription(cls, bk_cloud_id, items, target_hosts, plugin_name):
+    def create_subscription(cls, bk_cloud_id, items, target_hosts, plugin_name, task_name=""):
         logger.info(
             "update or create ping server subscription task, bk_cloud_id(%s), target_hosts(%s), plugin(%s)",
             bk_cloud_id,
@@ -121,6 +122,7 @@ class PingServerSubscriptionConfig(models.Model):
                     if old_subscription_params_md5 != new_subscription_params_md5:
                         logger.info("ping server subscription task config has changed, update it.")
                         result = api.node_man.update_subscription(subscription_params)
+                        log_format_record(logger, task_name, "post", subscription_params, result)
                         logger.info("update ping server subscription successful, result:{}".format(result))
                         config.config = subscription_params
                         config.save()
@@ -139,6 +141,7 @@ class PingServerSubscriptionConfig(models.Model):
                 try:
                     logger.info("ping server subscription task not exists, create it.")
                     result = api.node_man.create_subscription(subscription_params)
+                    log_format_record(logger, task_name, "post", subscription_params, result)
                     logger.info("create ping server subscription successful, result:{}".format(result))
 
                     # 创建订阅成功后，优先存储下来，不然因为其他报错会导致订阅ID丢失
@@ -155,6 +158,13 @@ class PingServerSubscriptionConfig(models.Model):
                     result = api.node_man.run_subscription(
                         subscription_id=subscription_id, actions={plugin_name: "INSTALL"}
                     )
+                    log_format_record(
+                        logger,
+                        task_name,
+                        "post",
+                        {"subscription_id": subscription_id, "actions": {plugin_name: "INSTALL"}},
+                        result,
+                    )
                     logger.info("run ping server subscription result:{}".format(result))
                 except Exception as e:  # noqa
                     logger.exception(
@@ -167,8 +177,16 @@ class PingServerSubscriptionConfig(models.Model):
                 continue
 
             api.node_man.switch_subscription(subscription_id=config.subscription_id, action="disable")
+            log_format_record(logger, task_name, "post", {"subscription_id": subscription_id, "action": "disable"})
             result = api.node_man.run_subscription(
                 subscription_id=config.subscription_id, actions={plugin_name: "STOP"}
+            )
+            log_format_record(
+                logger,
+                task_name,
+                "post",
+                {"subscription_id": subscription_id, "actions": {plugin_name: "STOP"}},
+                result,
             )
             config.config["status"] = "STOP"
             config.save()

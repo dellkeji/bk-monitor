@@ -29,14 +29,14 @@ logger = logging.getLogger("metadata")
 def refresh_custom_report_config(bk_biz_id=None):
     from metadata.task.custom_report import refresh_custom_report_2_node_man
 
-    refresh_custom_report_2_node_man(bk_biz_id=bk_biz_id)
+    refresh_custom_report_2_node_man(bk_biz_id=bk_biz_id, task_name="refresh_custom_report_config")
 
 
 @app.task(ignore_result=True, queue="celery_metadata_task_worker")
 def refresh_custom_log_report_config(log_group_id=None):
     from metadata.task.custom_report import refresh_custom_log_config
 
-    refresh_custom_log_config(log_group_id=log_group_id)
+    refresh_custom_log_config(log_group_id=log_group_id, task_name="refresh_custom_log_report_config")
 
 
 @app.task(ignore_result=True, queue="celery_metadata_task_worker")
@@ -155,7 +155,7 @@ def update_time_series_metrics(time_series_metrics):
 
 
 @app.task(ignore_result=True, queue="celery_report_cron")
-def manage_es_storage(es_storages):
+def manage_es_storage(es_storages, task_name=""):
     """
     NOTE: 针对结果表校验使用的es集群状态，不要统一校验
     """
@@ -176,7 +176,7 @@ def manage_es_storage(es_storages):
             if not es_storage.index_exist():
                 #   如果该table_id的index在es中不存在，说明要走初始化流程
                 logger.info("table_id->[%s] found no index in es,will create new one", es_storage.table_id)
-                es_storage.create_index_and_aliases(es_storage.slice_gap)
+                es_storage.create_index_and_aliases(es_storage.slice_gap, task_name=task_name)
             else:
                 # 否则走更新流程
                 es_storage.update_index_and_aliases(ahead_time=es_storage.slice_gap)

@@ -28,11 +28,11 @@ def refresh_ping_server_2_node_man():
     刷新Ping Server配置至节点管理，下发ip列表到proxy机器
     """
     # 兼容下发proxy
-    refresh_ping_conf("bkmonitorproxy")
-    refresh_ping_conf("bk-collector")
+    refresh_ping_conf("bkmonitorproxy", task_name="refresh_ping_server_2_node_man")
+    refresh_ping_conf("bk-collector", task_name="refresh_ping_server_2_node_man")
 
 
-def refresh_ping_conf(plugin_name="bkmonitorproxy"):
+def refresh_ping_conf(plugin_name="bkmonitorproxy", task_name=""):
     """
     刷新Ping Server的ip列表配置
 
@@ -134,7 +134,9 @@ def refresh_ping_conf(plugin_name="bkmonitorproxy"):
 
         # 4. 通过节点管理订阅任务将分配好的ip下发到机器
         try:
-            PingServerSubscriptionConfig.create_subscription(bk_cloud_id, host_info, target_hosts, plugin_name)
+            PingServerSubscriptionConfig.create_subscription(
+                bk_cloud_id, host_info, target_hosts, plugin_name, task_name=task_name
+            )
         except Exception:  # noqa
             logger.exception(
                 "下发pingserver订阅任务失败，bk_cloud_id({}), proxies_ips({}), plugin({})".format(

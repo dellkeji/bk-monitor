@@ -31,7 +31,9 @@ logger = logging.getLogger("metadata")
 RECOMMENDED_VERSION = {"bk-collector": "0.16.1061"}
 
 
-def update_event_by_cluster(cluster_id_with_table_ids: Optional[dict] = None, data_ids: Optional[list] = None):
+def update_event_by_cluster(
+    cluster_id_with_table_ids: Optional[dict] = None, data_ids: Optional[list] = None, task_name: Optional[list] = None
+):
     """
     按照ES集群更新event维度等信息
     :param cluster_id_with_table_ids: ES集群id与table_id_list的字典
@@ -123,7 +125,7 @@ def check_event_update():
 
 
 @share_lock()
-def refresh_custom_report_2_node_man(bk_biz_id=None):
+def refresh_custom_report_2_node_man(bk_biz_id=None, task_name="refresh_custom_report_2_node_man"):
     try:
         # 判定节点管理是否上传支持v2新配置模版的bk-collector版本0.16.1061
         default_version = "0.0.0"
@@ -131,14 +133,16 @@ def refresh_custom_report_2_node_man(bk_biz_id=None):
         version_str_list = [p.get("version", default_version) for p in plugin_infos if p.get("is_ready", True)]
         max_version = get_max_version(default_version, version_str_list)
         if compare_versions(max_version, RECOMMENDED_VERSION["bk-collector"]) > 0:
-            models.CustomReportSubscription.refresh_collector_custom_conf(bk_biz_id, "bk-collector")
+            models.CustomReportSubscription.refresh_collector_custom_conf(
+                bk_biz_id, "bk-collector", task_name=task_name
+            )
         else:
             logger.info(
                 f"当前节点管理已上传的bk-collector版本（{max_version}）低于支持新配置模版版本"
                 f"（{RECOMMENDED_VERSION['bk-collector']}），暂不下发bk-collector配置文件"
             )
         # bkmonitorproxy全量更新
-        models.CustomReportSubscription.refresh_collector_custom_conf(None, "bkmonitorproxy")
+        models.CustomReportSubscription.refresh_collector_custom_conf(None, "bkmonitorproxy", task_name=task_name)
     except Exception as e:  # noqa
         logger.exception("refresh custom report config to colletor error: %s" % e)
 
@@ -175,7 +179,7 @@ def check_update_ts_metric():
 
 
 @share_lock()
-def refresh_custom_log_config(log_group_id=None):
+def refresh_custom_log_config(log_group_id=None, task_name="refresh_custom_log_config"):
     """
     Refresh Custom Log Config to Bk Collector
     """
@@ -188,7 +192,7 @@ def refresh_custom_log_config(log_group_id=None):
     # Deploy Configs
     for log_group in log_groups:
         try:
-            models.LogSubscriptionConfig.refresh(log_group)
+            models.LogSubscriptionConfig.refresh(log_group, task_name=task_name)
         except Exception as err:
             logger.exception(
                 "[RefreshCustomLogConfigFailed] Err => %s; LogGroup => %s", str(err), log_group.log_group_id

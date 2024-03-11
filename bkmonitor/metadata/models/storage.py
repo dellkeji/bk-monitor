@@ -50,7 +50,7 @@ from core.drf_resource import api
 from metadata import config
 from metadata.models import constants
 from metadata.models.influxdb_cluster import InfluxDBTool
-from metadata.utils import consul_tools, es_tools, go_time, influxdb_tools
+from metadata.utils import basic, consul_tools, es_tools, go_time, influxdb_tools
 from metadata.utils.redis_tools import RedisTools
 
 from .constants import ES_ALIAS_EXPIRED_DELAY_DAYS
@@ -2473,15 +2473,15 @@ class ESStorage(models.Model, StorageResultTable):
                     return
                 now_gap += self.slice_gap
 
-    def create_index_and_aliases(self, ahead_time=1440):
-        self.create_index_v2()
-        self.create_or_update_aliases(ahead_time)
+    def create_index_and_aliases(self, ahead_time=1440, task_name=""):
+        self.create_index_v2(task_name=task_name)
+        self.create_or_update_aliases(ahead_time, task_name=task_name)
 
-    def update_index_and_aliases(self, ahead_time=1440):
-        self.update_index_v2()
-        self.create_or_update_aliases(ahead_time)
+    def update_index_and_aliases(self, ahead_time=1440, task_name=""):
+        self.update_index_v2(task_name=task_name)
+        self.create_or_update_aliases(ahead_time, task_name=task_name)
 
-    def create_index_v2(self):
+    def create_index_v2(self, task_name=""):
         """
         创建全新的index序列，以及指向它的全新alias
         """
@@ -2493,10 +2493,12 @@ class ESStorage(models.Model, StorageResultTable):
         new_index_name = self.make_index_name(now_datetime_object, 0, "v2")
         # 创建index
         es_client.indices.create(index=new_index_name, body=self.index_body, params={"request_timeout": 30})
+        basic.log_format_record(logger, task_name, "post", self.index_body)
+
         logger.info("table_id->[%s] has created new index->[%s]", self.table_id, new_index_name)
         return True
 
-    def update_index_v2(self):
+    def update_index_v2(self, task_name=""):
         """
         判断index是否需要分裂，并提前建立index别名的功能
         此处仍然保留每个小时创建新的索引，主要是为了在发生异常的时候，可以降低影响的索引范围（最多一个小时）
@@ -2522,7 +2524,7 @@ class ESStorage(models.Model, StorageResultTable):
             logger.warn(
                 "attention! table_id->[%s] can not found any index to update,will do create function", self.table_id
             )
-            return self.create_index_v2()
+            return self.create_index_v2(task_name=task_name)
 
         # 1.1 兼容旧任务，将不合理的超前index清理掉
         # 如果最新时间超前了，要对应处理一下,通常发生在旧任务应用新的es代码过程中
@@ -2530,6 +2532,7 @@ class ESStorage(models.Model, StorageResultTable):
         while now_datetime_object < current_index_info["datetime_object"]:
             logger.warn("table_id->[%s] delete index->[%s] because it has ahead time", self.table_id, last_index_name)
             es_client.indices.delete(index=last_index_name)
+            basic.log_format_record(logger, task_name, "delete", last_index_name)
             # 重新获取最新的index，这里没做防护，默认存在超前的index，就一定存在不超前的可用index
             current_index_info = self.current_index_info()
             last_index_name = self.make_index_name(
@@ -2598,6 +2601,7 @@ class ESStorage(models.Model, StorageResultTable):
             if es_client.count(index=last_index_name).get("count", 0) == 0:
                 new_index = current_index_info["index"]
                 es_client.indices.delete(index=last_index_name)
+                basic.log_format_record(logger, task_name, "delete", last_index_name)
                 logger.info(
                     "table_id->[%s] has index->[%s] which has not data, will be deleted for new index create.",
                     self.table_id,
@@ -2614,6 +2618,7 @@ class ESStorage(models.Model, StorageResultTable):
 
         # 2.1 创建新的index
         es_client.indices.create(index=new_index_name, body=self.index_body, params={"request_timeout": 30})
+        basic.log_format_record(logger, task_name, "post", self.index_body)
         logger.info("table_id->[%s] new index_name->[%s] is created now", self.table_id, new_index_name)
 
         return True
@@ -2703,7 +2708,7 @@ class ESStorage(models.Model, StorageResultTable):
             return old_write_result.group("datetime")
         return ""
 
-    def clean_index_v2(self):
+    def clean_index_v2(self, task_name=""):
         """
         清理过期的写入别名及index的操作，如果发现某个index已经没有写入别名，那么将会清理该index
         :return: int(清理的index个数) | raise Exception
@@ -2732,6 +2737,12 @@ class ESStorage(models.Model, StorageResultTable):
                         alias_info["expired_alias"],
                     )
                     es_client.indices.delete_alias(index=index_name, name=",".join(alias_info["expired_alias"]))
+                    basic.log_format_record(
+                        logger,
+                        task_name,
+                        "delete",
+                        {"index": index_name, "alias": ",".join(alias_info["expired_alias"])},
+                    )
                     logger.warning(
                         "table_id->[%s] delete_alias_list->[%s] is deleted.",
                         self.table_id,
@@ -2747,6 +2758,7 @@ class ESStorage(models.Model, StorageResultTable):
             )
             try:
                 es_client.indices.delete(index=index_name)
+                basic.log_format_record(logger, task_name, "delete", index_name)
             except (
                 elasticsearch5.ElasticsearchException,
                 elasticsearch.ElasticsearchException,
@@ -3329,7 +3341,7 @@ class ESStorage(models.Model, StorageResultTable):
                     expired_snapshots.append(snapshot)
         return expired_snapshots
 
-    def clean_snapshot(self):
+    def clean_snapshot(self, task_name=""):
         if not self.can_delete_snapshot:
             return
 
@@ -3346,9 +3358,15 @@ class ESStorage(models.Model, StorageResultTable):
         logger.debug("table_id->[%s] has clean snapshot", self.table_id)
 
     @atomic(config.DATABASE_CONNECTION_NAME)
-    def delete_snapshot(self, snapshot_name, target_snapshot_repository_name):
+    def delete_snapshot(self, snapshot_name, target_snapshot_repository_name, task_name=""):
         EsSnapshotIndice.objects.filter(table_id=self.table_id, snapshot_name=snapshot_name).delete()
+        basic.log_format_record(
+            logger, task_name, "delete", {"table_id": self.table_id, "snapshot_name": snapshot_name}
+        )
         self.es_client.snapshot.delete(target_snapshot_repository_name, snapshot_name)
+        basic.log_format_record(
+            logger, task_name, "delete", {"table_id": target_snapshot_repository_name, "snapshot_name": snapshot_name}
+        )
         logger.info("table_id -> [%s] has delete snapshot -> [%s]", self.table_id, snapshot_name)
 
     def delete_all_snapshot(self, target_snapshot_repository_name):

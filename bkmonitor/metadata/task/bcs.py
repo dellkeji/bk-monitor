@@ -25,6 +25,7 @@ from metadata.models.bcs.resource import (
     PodMonitorInfo,
     ServiceMonitorInfo,
 )
+from metadata.utils.basic import log_format_record
 from metadata.utils.bcs import get_bcs_dataids
 
 logger = logging.getLogger("metadata")
@@ -39,19 +40,25 @@ def refresh_bcs_monitor_info():
     for cluster in BCSClusterInfo.objects.filter(status=BCSClusterInfo.CLUSTER_STATUS_RUNNING):
         try:
             # 刷新集群内置公共dataid resource
-            cluster.refresh_common_resource()
+            cluster.refresh_common_resource(task_name="refresh_bcs_monitor_info")
             logger.debug("refresh bcs common resource in cluster:{} done".format(cluster.cluster_id))
 
             # 查找新的monitor info并记录到数据库，删除已不存在的
-            ServiceMonitorInfo.refresh_resource(cluster.cluster_id, cluster.CustomMetricDataID)
+            ServiceMonitorInfo.refresh_resource(
+                cluster.cluster_id, cluster.CustomMetricDataID, task_name="refresh_bcs_monitor_info"
+            )
             logger.debug("refresh bcs service monitor resource in cluster:{} done".format(cluster.cluster_id))
-            PodMonitorInfo.refresh_resource(cluster.cluster_id, cluster.CustomMetricDataID)
+            PodMonitorInfo.refresh_resource(
+                cluster.cluster_id, cluster.CustomMetricDataID, task_name="refresh_bcs_monitor_info"
+            )
             logger.debug("refresh bcs pod monitor resource in cluster:{} done".format(cluster.cluster_id))
 
             # 刷新配置了自定义dataid的dataid resource
-            ServiceMonitorInfo.refresh_custom_resource(cluster_id=cluster.cluster_id)
+            ServiceMonitorInfo.refresh_custom_resource(
+                cluster_id=cluster.cluster_id, task_name="refresh_bcs_monitor_info"
+            )
             logger.debug("refresh bcs service monitor custom resource in cluster:{} done".format(cluster.cluster_id))
-            PodMonitorInfo.refresh_custom_resource(cluster_id=cluster.cluster_id)
+            PodMonitorInfo.refresh_custom_resource(cluster_id=cluster.cluster_id, task_name="refresh_bcs_monitor_info")
             logger.debug("refresh bcs pod monitor custom resource in cluster:{} done".format(cluster.cluster_id))
         except Exception:  # noqa
             logger.exception("refresh bcs monitor info error, cluster_id(%s)", cluster.cluster_id)
@@ -59,8 +66,8 @@ def refresh_bcs_monitor_info():
 
 @app.task(ignore_result=True, queue="celery_cron")
 def refresh_dataid_resource(cluster_id, data_id):
-    ServiceMonitorInfo.refresh_resource(cluster_id, data_id)
-    PodMonitorInfo.refresh_resource(cluster_id, data_id)
+    ServiceMonitorInfo.refresh_resource(cluster_id, data_id, task_name="refresh_dataid_resource")
+    PodMonitorInfo.refresh_resource(cluster_id, data_id, task_name="refresh_dataid_resource")
 
 
 @share_lock(ttl=PERIODIC_TASK_DEFAULT_TTL, identify="metadata_refreshBCSMetricsInfo")
@@ -115,6 +122,9 @@ def refresh_bcs_metrics_label():
     # 每个label批量更新一下
     for label_name, field_ids in label_result.items():
         models.TimeSeriesMetric.objects.filter(field_id__in=field_ids).update(label=label_name)
+
+    log_format_record(logger, "refresh_bcs_metrics_label", "update", label_result)
+
     logger.debug("refresh bcs metrics label done")
 
 
@@ -187,6 +197,8 @@ def discover_bcs_clusters():
     # 如果是不存在的集群列表则更新当前状态为删除，加上>0的判断防止误删
     if cluster_list:
         BCSClusterInfo.objects.exclude(cluster_id__in=cluster_list).update(status=BCSClusterInfo.CLUSTER_STATUS_DELETED)
+
+    log_format_record(logger, "discover_bcs_clusters", "delete", cluster_list)
 
 
 def update_bcs_cluster_cloud_id_config(bk_biz_id=None, cluster_id=None):
@@ -277,3 +289,5 @@ def update_bcs_cluster_cloud_id_config(bk_biz_id=None, cluster_id=None):
         # 更新云区域
         for bk_cloud_id, bcs_cluster_ids in update_params.items():
             BCSClusterInfo.objects.filter(cluster_id__in=bcs_cluster_ids).update(bk_cloud_id=bk_cloud_id)
+
+        log_format_record(logger, "discover_bcs_clusters", "update", update_params)

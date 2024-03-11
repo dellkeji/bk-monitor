@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 
 import logging
+from typing import Optional
 
 from kubernetes import client as k8s_client
 from kubernetes.dynamic import client as dynamic_client
 from kubernetes.dynamic.exceptions import NotFoundError, ResourceNotFoundError
 
 from metadata import config
+from metadata.utils.basic import log_format_record
 
 logger = logging.getLogger("metadata")
 
@@ -37,7 +39,9 @@ def is_equal_config(source: dict, target: dict) -> bool:
     return is_equal_dict(source, target)
 
 
-def ensure_data_id_resource(api_client: k8s_client.ApiClient, resource_name: str, config_data: dict) -> bool:
+def ensure_data_id_resource(
+    api_client: k8s_client.ApiClient, resource_name: str, config_data: dict, task_name: Optional[str] = None
+) -> bool:
     """
     将resource和data_id的关系注入到BCS集群当中
     :return: True | raise Exception
@@ -61,10 +65,12 @@ def ensure_data_id_resource(api_client: k8s_client.ApiClient, resource_name: str
         data = d_client.get(resource=resource, name=resource_name)
         config_data["metadata"]["resourceVersion"] = data["metadata"]["resourceVersion"]
         d_client.replace(resource=resource, body=config_data)
+        log_format_record(task_name, action, config_data)
     except NotFoundError:
         # 不存在则新增
         action = "create"
         d_client.create(resource, body=config_data)
+        log_format_record(task_name, action, config_data)
     except ResourceNotFoundError:
         # 如果找不到crd，则直接退出
         logger.debug("dataid resource crd not found in k8s cluster, will not create any dataid resource")

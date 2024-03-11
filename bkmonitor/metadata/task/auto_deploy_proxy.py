@@ -16,6 +16,7 @@ from django.conf import settings
 
 from bkmonitor.utils.version import get_max_version
 from core.drf_resource import api
+from metadata.utils.basic import log_format_record
 
 logger = logging.getLogger("metadata")
 
@@ -70,6 +71,7 @@ class AutoDeployProxy(object):
         )
         try:
             result = api.node_man.plugin_operate(**params)
+            log_format_record(logger, "post", "plugin_operate", params, plugin_info_list)
             message = "update ({}) to version({}) success with result({}), Please see detail in bk_nodeman SaaS".format(
                 plugin_name, plugin_version, result
             )

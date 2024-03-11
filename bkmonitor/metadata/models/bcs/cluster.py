@@ -281,7 +281,7 @@ class BCSClusterInfo(models.Model):
             labels["bk_env"] = self.bk_env_label
         return labels
 
-    def refresh_common_resource(self):
+    def refresh_common_resource(self, task_name=None):
         """
         刷新内置公共dataid资源信息，追加部署的资源，更新未同步的资源
         :param cluster_id: 集群ID
@@ -314,12 +314,12 @@ class BCSClusterInfo(models.Model):
             # 检查k8s集群里是否已经存在对应resource
             if datasource_name_lower not in resource_items.keys():
                 # 如果k8s_resource不存在，则增加
-                ensure_data_id_resource(api_client, datasource_name_lower, dataid_config)
+                ensure_data_id_resource(api_client, datasource_name_lower, dataid_config, task_name=task_name)
                 logger.info("cluster->[%s] add new resource->[%s]", self.cluster_id, dataid_config)
             else:
                 # 否则检查信息是否一致，不一致则更新
                 if not is_equal_config(dataid_config, resource_items[datasource_name_lower]):
-                    ensure_data_id_resource(api_client, datasource_name_lower, dataid_config)
+                    ensure_data_id_resource(api_client, datasource_name_lower, dataid_config, task_name=task_name)
                     logger.info("cluster->[%s] update resource->[%s]", self.cluster_id, dataid_config)
 
     @atomic(config.DATABASE_CONNECTION_NAME)
