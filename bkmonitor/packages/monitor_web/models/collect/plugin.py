@@ -9,17 +9,18 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
+from django.db import models
 
-from monitor_web.extend_account.models import *  # noqa
-from monitor_web.models.alert_events import *  # noqa
-from monitor_web.models.base import *  # noqa
+from monitor_web.models.collect.base import BaseResource
 
-# 采集相关
-from monitor_web.models.collect import *  # noqa
-from monitor_web.models.collecting import *  # noqa
-from monitor_web.models.custom_report import *  # noqa
-from monitor_web.models.data_explorer import *  # noqa
-from monitor_web.models.data_target import *  # noqa
-from monitor_web.models.export_import import *  # noqa
-from monitor_web.models.file import *  # noqa
-from monitor_web.models.plugin import *  # noqa
+
+class PluginCollect(BaseResource):
+    """插件采集"""
+
+    kind = models.CharField("资源类型", max_length=32, default="plugin")
+    scope = models.CharField("数据范围", max_length=16, default="host")
+    task_id = models.CharField("任务ID", max_length=128, null=True, blank=True)
+
+    class Meta:
+        verbose_name = "插件采集"
+        verbose_name_plural = "插件采集"
